@@ -1,0 +1,3 @@
+﻿SumatraPDF 3.6.1 64-bit portable
+Official source: https://www.sumatrapdfreader.org/dl/rel/3.6.1/SumatraPDF-3.6.1-64.zip
+License/source: https://github.com/sumatrapdfreader/sumatrapdf

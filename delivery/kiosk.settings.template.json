@@ -1,0 +1,10 @@
+{
+  "Mode": "Demo",
+  "HospitalName": "体检中心",
+  "SupportText": "需要帮助，请联系体检中心服务台",
+  "IdleSeconds": 60,
+  "FullScreen": true,
+  "PhysicalPrintingEnabled": false,
+  "PrinterName": "",
+  "PdfEnginePath": ""
+}

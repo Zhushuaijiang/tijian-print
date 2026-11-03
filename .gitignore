@@ -1,0 +1,23 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+
+# Local secrets & machine-specific config (never commit)
+**/integration.local.json
+**/kiosk.settings.json
+**/api-key.dpapi
+**/appsettings.*.local.json
+
+# Runtime artifacts
+*.log
+.debug/
+backup-*/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vs/
+.idea/

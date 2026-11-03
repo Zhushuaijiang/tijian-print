@@ -1,0 +1,86 @@
+体检自助打印第一阶段验证工程
+
+状态与范围
+- 目标 .NET 8，Windows SDK 9 可构建；终端需要 .NET 8 Windows Desktop，API 需要 ASP.NET Core 8。
+- 第一阶段提供真实查询/PDF校验的受控诊断工程，不包含真实打印入口，也不是无人值守生产成品。
+- 扫体检条码不能证明本人身份。身份核验尚未实现，真实打印始终禁用。
+- WPF 确认按钮只确认联调选择，不启动外部进程，不显示“打印完成”。
+- 本版 API/WPF 已在 Windows SDK9 Release 编译通过，各0警告0错误；22项测试全部通过。verify-api-default.ps1 已验证 /health 的真实打印标记为false、未配置查询返回503。
+- 现场上游网络连接尚未打通，不宣称真实患者链路联调成功。
+
+工程
+src/PeisSelfPrint.Core：输入、精确匹配、HTTP/HTTPS origin 策略、持久化账本、SumatraPDF 参数构造。
+src/PeisSelfPrint.Api：参数化 PostgreSQL 查询、密钥鉴权、上游报告接口与可选 PDF 内容验证。
+src/PeisSelfPrint.Desktop：WPF 键盘式扫码/手工输入、报告摘要与确认、60秒闲置清屏。
+tests/PeisSelfPrint.Tests：无测试框架依赖的22项控制台测试，覆盖输入、歧义、origin、响应包装、并发、重启和磁盘失败。
+
+构建和测试（Windows PowerShell，在本目录执行）
+  .\Verify.ps1
+或分别执行：
+  dotnet build PeisSelfPrint.sln -c Release
+  dotnet run --project tests/PeisSelfPrint.Tests -c Release
+API 使用 Npgsql 8.0.6，恢复包需院内 NuGet 源/离线缓存或可用官方源。测试均使用合成值，不连接患者服务，不出纸。
+
+为什么 PatientIdMappingVerified 默认 false
+源码 PeisReportBLL.ViewPeisPersonReportListByZLCDRView 先把 PatientId 用作 HIS 患者查询，若获得身份证则按身份证查报告，只有未获取时才按 PeisPid 查询。不能认为 PatientId 恒等于 PeisPid。
+本工程从登记表得到 PeisPid，并以此调用该接口；操作人员必须用授权测试样本核对两种分支，排除 HIS ID 碰撞、报告串人，确认准确体检号对应的报告属于预期患者后，才可开启该映射开关做受控诊断。尚未取得证据时保持关闭，返回 PATIENT_ID_MAPPING_UNVERIFIED。
+目前上游 HospitalAreaId/PeisCenterId 参数疑似未赋入查询条件，不能视为可靠院区隔离。上游还可能按登记分组取 First，因此接口隐藏的多版本报告歧义不能由本地完全发现；真打印前需正式报告选择契约。
+
+API 配置（通过受限服务账户环境注入，禁止把凭据写进版本库）
+  Integration__ApiKey                     至少32字符的随机终端服务密钥
+  Integration__ConnectionString           只读 PostgreSQL 账户连接串
+  Integration__ReportApiBaseUrl           经核实的根/虚拟目录地址，以 / 结尾
+  Integration__AllowedReportApiOrigins__0 上游精确 origin，协议+主机+端口，不带业务路径
+  Integration__AllowedPdfOrigins__0       PDF 精确 origin，协议+主机+端口，不带业务路径
+  Integration__AllowIntranetHttp          默认false；仅院内受控HTTP诊断时设true
+  Integration__HospitalAreaId             经核实的院区标识；不能据此假定范围隔离已生效
+  Integration__PeisCenterId               经核实的中心标识
+  Integration__PatientIdMappingVerified   上述分支映射核实后才设true
+  Integration__ValidatePdfContent         true会读取真实PDF到进程内存，不返回PDF给终端、不落盘
+默认样例无地址/凭据，未配置返回503，不访问数据库或上游。
+origin 示例仅用文档保留测试IP：若实际经批准服务为 http://192.0.2.10:8080/，需同时显式允许HTTP，并把 http://192.0.2.10:8080 加入对应origin数组。真实地址由现场管理员填写；此示例不是可用院内服务。
+上游 API 与 PDF 可以来自不同origin，分别配置，禁止通配符。HTTPS也必须精确命中origin；端口变化必须重新批准配置。
+
+数据库和报告规则
+固定查询表 "PeisPatientRegisterIndex"，读取 "PeisPid"、"PeisPatientRegisterTime"，WHERE "PeisNo"=@examNumber。
+非默认schema需在只读账户连接串配置正确Search Path。登记最多读两条，多条拒绝，不按最新时间擅自选择。
+兼容上游裸数组及 {"code":200,"data":[...]}；其他结构拒绝。体检号逐字符匹配，保留前导零和大小写，同号多行、重复行拒绝。
+peisReportAdress 原样交给URI策略与HTTP请求，保留 viewer/{id}?_type=pdf&...&pageOffset=-2 的完整query。
+即使URL有_type=pdf仍不能假定响应为PDF；ValidatePdfContent=true时必须状态200且前5字节为%PDF-。这只验证格式头，不代表文档完整性、内容正确、可打印或身份核验通过。
+
+启动与诊断
+API仅本机监听：
+  dotnet run --project src/PeisSelfPrint.Api --urls http://127.0.0.1:5088
+GET /health 返回 validation-only，仅表示进程工作。
+POST /api/reports/resolve，Header X-Api-Key，请求体 {"examNumber":"经授权的测试体检号"}。
+成功返回 code=VALIDATED_FOR_INTEGRATION_ONLY、体检号、类型、时间、pdfContentValidated；identityVerified和realPrintingEnabled始终false。
+常见代码：CONFIGURATION_REQUIRED（配置不完整）、PATIENT_ID_MAPPING_UNVERIFIED（映射未核实）、AMBIGUOUS_REGISTRATION/AMBIGUOUS_REPORT（多条歧义）、PDF_ADDRESS_DENIED（origin/协议不符）、INVALID_PDF_CONTENT（不是PDF头）、INTEGRATION_TIMEOUT_OR_CANCELLED（总链路超时）。
+
+WPF（同一Windows终端）
+  $env:PEIS_API_BASE_URL='http://127.0.0.1:5088/'
+  PEIS_API_KEY由受限环境注入相同密钥，不在共享命令记录输入凭据。
+  dotnet run --project src/PeisSelfPrint.Desktop
+终端仅允许回环HTTP或HTTPS，跨主机必须有效证书并配置精确AllowedHosts。不要把回环监听改为通配符。
+扫码设备须键盘模式并以回车结束。体检号规则为1–64位字母/数字/连字符，真实格式若不同须核实后调整。
+
+网络与隐私
+- HTTP仅在明确开关+精确origin下允许；上游接口禁止自动跳转。PDF允许最多3次显式跳转，每一跳重新验证精确origin并拦截循环；不使用系统代理/Cookie，初始PDF地址须绝对地址，不接受userinfo/fragment，不跳过证书验证。
+- 2026-11-03现场发现报告viewer从8230跳到8240的PDF服务，已为此增加TrustedPdfReader与回归测试；23项测试通过。现场补丁已部署，之前下载的离线压缩包未自动更新。
+- 请求体最大4KiB，JSON最大1MiB，PDF最大20MiB；响应头等待20秒，全链路linked cancellation 45秒覆盖数据库与流读取。
+- 每分钟最多30次查询，响应no-store，日志默认Warning，不记录体检号、患者ID、报告URL或内容。
+- origin必须由医院控制，DNS/出口策略限制这些目标，防止DNS重绑定。密钥不等于患者身份凭证。
+
+持久化账本
+PrintLedger(绝对文件路径) 为单机本地磁盘账本：独占.lock文件持有期间拒绝其他实例；同目录.tmp写入、WriteThrough和Flush(true)后原子替换。先落盘才返回调度许可，写入失败后该实例不可继续调度。
+启动读取已有账本；损坏文件不自动重置；遗留Dispatching恢复并持久化为Unknown，所有已有状态均拒绝重复TryReserve。Unknown无自动重试通道。
+账本目前已实现并由测试调用，但诊断API/WPF不发起打印任务。未来真实接入需本机NTFS、服务账户ACL与受控备份，不能使用网络共享盘，不能删除账本来“重试”。文件系统和电源故障的实际持久性仍需现场验收，不能把普通单机账本当分布式事务系统。
+
+真实打印前待完成
+1. 完成授权样本的HIS/PeisPid分支证据、院区隔离及报告版本选择契约。
+2. 接入本人身份验证、一次性授权、终端权限与人工异常处理。
+3. 把已实现的持久化账本接入调度，并明确报告版本去重键、重印授权和审计。
+4. 配置经审核许可的SumatraPDF固定绝对路径、固定打印机。ExternalPdfEngine目前只构造ArgumentList，不调用Process.Start，禁止本阶段直接接通UI。
+5. 调度前落盘Dispatching；外部进程异常、超时或未知打印机状态一律Unknown，人工核实后另走重印流程。进程退出0最多为Submitted，不能当实际出纸。
+6. 接入受控PDF暂存目录、最小ACL、清理机制、打印机状态反馈和受授权的真实出纸验收。
+
+本次不真实出纸，没有真实打印开关。映射开关只允许经证据支持的受控查询诊断，不能启用打印。

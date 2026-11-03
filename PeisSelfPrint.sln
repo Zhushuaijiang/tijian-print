@@ -1,0 +1,36 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PeisSelfPrint.Core", "src\PeisSelfPrint.Core\PeisSelfPrint.Core.csproj", "{E6CA9071-2304-42B4-B11C-06009C57A001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PeisSelfPrint.Api", "src\PeisSelfPrint.Api\PeisSelfPrint.Api.csproj", "{E6CA9071-2304-42B4-B11C-06009C57A002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PeisSelfPrint.Desktop", "src\PeisSelfPrint.Desktop\PeisSelfPrint.Desktop.csproj", "{E6CA9071-2304-42B4-B11C-06009C57A003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PeisSelfPrint.Tests", "tests\PeisSelfPrint.Tests\PeisSelfPrint.Tests.csproj", "{E6CA9071-2304-42B4-B11C-06009C57A004}"
+EndProject
+Global
+  GlobalSection(SolutionConfigurationPlatforms) = preSolution
+    Debug|Any CPU = Debug|Any CPU
+    Release|Any CPU = Release|Any CPU
+  EndGlobalSection
+  GlobalSection(ProjectConfigurationPlatforms) = postSolution
+    {E6CA9071-2304-42B4-B11C-06009C57A001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A001}.Release|Any CPU.Build.0 = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A002}.Release|Any CPU.Build.0 = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A003}.Release|Any CPU.Build.0 = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {E6CA9071-2304-42B4-B11C-06009C57A004}.Release|Any CPU.Build.0 = Release|Any CPU
+  EndGlobalSection
+EndGlobal
