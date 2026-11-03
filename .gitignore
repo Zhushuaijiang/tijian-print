@@ -21,3 +21,6 @@ backup-*/
 Thumbs.db
 .vs/
 .idea/
+
+# Installer embedded payload (contains credentials, never commit)
+src/PeisSelfPrint.Installer/payload.zip

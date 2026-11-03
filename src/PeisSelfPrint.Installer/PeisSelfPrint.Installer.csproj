@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>体检自助机一键安装</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="payload.zip" LogicalName="payload.zip" />
+  </ItemGroup>
+</Project>
