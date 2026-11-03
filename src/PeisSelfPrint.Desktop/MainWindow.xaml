@@ -22,7 +22,7 @@
     <StackPanel><TextBlock x:Name="HospitalLabel" Text="体检中心" FontSize="18" Foreground="#5A7785"/><TextBlock Text="报告自助服务" FontSize="30" FontWeight="Bold"/></StackPanel>
     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
      <Border x:Name="ModeBadge" Background="#FFF3DB" CornerRadius="10" Padding="14,8" Margin="0,0,16,0"><TextBlock x:Name="ModeText" Text="演示模式 · 不会出纸" FontSize="17" Foreground="#986510"/></Border>
-     <TextBlock x:Name="ClockText" FontSize="18" VerticalAlignment="Center" Foreground="#607A87"/>
+     <TextBlock x:Name="ClockText" FontSize="18" VerticalAlignment="Center" Foreground="#607A87" MouseLeftButtonDown="ClockGate_Click" AutomationProperties.Name="时间"/>
     </StackPanel>
    </Grid>
    <Grid Grid.Row="1" Margin="0,6,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>

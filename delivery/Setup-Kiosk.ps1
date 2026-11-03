@@ -117,9 +117,16 @@ function Invoke-AllChecks {
     # 6. 打印机
     $printers = Get-InstalledPrinters
     Add-Check '系统打印机' ($printers.Count -gt 0) $(if ($printers.Count -gt 0) { $printers -join ', ' } else { '未检测到任何打印机' })
-    if ($null -ne $kiosk -and $kiosk.PrinterName) {
-        $match = $printers -contains $kiosk.PrinterName
-        Add-Check '配置的打印机已安装' $match $(if ($match) { $kiosk.PrinterName + ' 就绪' } else { '未找到「' + $kiosk.PrinterName + '」，请在下方选择后保存' })
+    $sysDefault = ''
+    try { $sysDefault = (Get-CimInstance -ClassName Win32_Printer -Filter 'Default=true' | Select-Object -First 1).Name } catch {}
+    Add-Check '系统默认打印机' ($null -ne $sysDefault -and $sysDefault -ne '') $(if ($sysDefault) { $sysDefault } else { '无法获取（可在 Windows 打印机设置中指定）' })
+    if ($null -ne $kiosk) {
+        if ([string]::IsNullOrWhiteSpace($kiosk.PrinterName)) {
+            Add-Check '打印机选择策略' $true ('跟随系统默认打印机（当前默认：' + $(if ($sysDefault) { $sysDefault } else { '未知' }) + '）')
+        } else {
+            $match = $printers -contains $kiosk.PrinterName
+            Add-Check '配置的打印机已安装' $match $(if ($match) { $kiosk.PrinterName + ' 就绪（未找到时自动回退系统默认）' } else { '未找到「' + $kiosk.PrinterName + '」，打印时会自动回退到系统默认打印机；建议在下方重新选择' })
+        }
     }
 
     # 7. 打印引擎路径
@@ -185,6 +192,9 @@ $gbConfig.Controls.Add($btnSavePrinter)
 $btnFixEngine = New-Object Windows.Forms.Button
 $btnFixEngine.Text = '修复打印引擎路径'; $btnFixEngine.Location = New-Object Drawing.Point(540, 24); $btnFixEngine.Size = New-Object Drawing.Size(150, 28)
 $gbConfig.Controls.Add($btnFixEngine)
+$btnSetDefault = New-Object Windows.Forms.Button
+$btnSetDefault.Text = '设为系统默认'; $btnSetDefault.Location = New-Object Drawing.Point(700, 24); $btnSetDefault.Size = New-Object Drawing.Size(112, 28)
+$gbConfig.Controls.Add($btnSetDefault)
 
 $lblDb = New-Object Windows.Forms.Label
 $lblDb.Text = '数据库连接串：'; $lblDb.Location = New-Object Drawing.Point(16, 64); $lblDb.Size = New-Object Drawing.Size(100, 22)
@@ -236,11 +246,14 @@ function Refresh-ConfigPanel {
     $kiosk = Read-JsonFile $kioskSettings
     $local = Read-JsonFile $localConfig
     $cmbPrinter.Items.Clear()
+    [void]$cmbPrinter.Items.Add('(跟随系统默认打印机)')
     foreach ($p in (Get-InstalledPrinters)) { [void]$cmbPrinter.Items.Add($p) }
-    if ($null -ne $kiosk -and $kiosk.PrinterName) {
-        $idx = $cmbPrinter.Items.IndexOf([string]$kiosk.PrinterName)
-        if ($idx -ge 0) { $cmbPrinter.SelectedIndex = $idx }
-    }
+    $configured = ''
+    if ($null -ne $kiosk -and $kiosk.PSObject.Properties['PrinterName']) { $configured = [string]$kiosk.PrinterName }
+    if ($configured -ne '') {
+        $idx = $cmbPrinter.Items.IndexOf($configured)
+        if ($idx -ge 0) { $cmbPrinter.SelectedIndex = $idx } else { $cmbPrinter.SelectedIndex = 0 }
+    } else { $cmbPrinter.SelectedIndex = 0 }
     $conn = $null
     if ($null -ne $local -and $local.Integration -and $local.Integration.ConnectionString) { $conn = [string]$local.Integration.ConnectionString }
     elseif ($null -ne (Read-JsonFile $appsettings)) { $c = (Read-JsonFile $appsettings).Integration; if ($c -and $c.ConnectionString) { $conn = [string]$c.ConnectionString } }
@@ -281,10 +294,27 @@ $btnSavePrinter.Add_Click({
     if (-not (Test-Path -LiteralPath $kioskSettings)) { [Windows.Forms.MessageBox]::Show('kiosk.settings.json 不存在') | Out-Null; return }
     if ($cmbPrinter.SelectedItem) {
         $kiosk = Read-JsonFile $kioskSettings
-        $kiosk.PrinterName = [string]$cmbPrinter.SelectedItem
+        $value = [string]$cmbPrinter.SelectedItem
+        $kiosk.PrinterName = $(if ($value -eq '(跟随系统默认打印机)') { '' } else { $value })
         Save-JsonFile $kiosk $kioskSettings
-        [Windows.Forms.MessageBox]::Show('已保存打印机：' + $cmbPrinter.SelectedItem) | Out-Null
+        if ($value -eq '(跟随系统默认打印机)') {
+            [Windows.Forms.MessageBox]::Show('已保存：打印时跟随 Windows 系统默认打印机。') | Out-Null
+        } else {
+            [Windows.Forms.MessageBox]::Show('已保存打印机：' + $value) | Out-Null
+        }
     }
+})
+
+$btnSetDefault.Add_Click({
+    $value = [string]$cmbPrinter.SelectedItem
+    if (-not $value -or $value -eq '(跟随系统默认打印机)') { [Windows.Forms.MessageBox]::Show('请先在下拉框选择一台具体打印机。') | Out-Null; return }
+    try {
+        $p = Start-Process rundll32.exe -ArgumentList 'printui.dll,PrintUIEntry','/y','/n',('"'+$value+'"') -Wait -PassThru
+        $now = ''
+        try { $now = (Get-CimInstance -ClassName Win32_Printer -Filter 'Default=true' | Select-Object -First 1).Name } catch {}
+        if ($now -eq $value) { [Windows.Forms.MessageBox]::Show('系统默认打印机已设为「' + $value + '」。') | Out-Null }
+        else { [Windows.Forms.MessageBox]::Show('设置命令已发出，当前系统默认：' + $(if ($now) { $now } else { '未知' }) + '。请在 Windows 打印机设置中确认。') | Out-Null }
+    } catch { [Windows.Forms.MessageBox]::Show('设置失败: ' + $_.Exception.Message) | Out-Null }
 })
 
 $btnFixEngine.Add_Click({

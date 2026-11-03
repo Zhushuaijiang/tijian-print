@@ -59,6 +59,14 @@ static class KioskTests
             Check(adapter.Submits == before, "demo must never call physical print engine");
             Check(KioskMessages.For("CONFIGURATION_REQUIRED").Contains("服务台"), "patient-facing message must offer an action");
             Check(KioskMessages.For("PRINT_RESULT_UNKNOWN").Contains("请勿"), "unknown print outcome must discourage automatic retry");
+            var enginePath = Path.Combine(dir, "engine.exe"); File.WriteAllText(enginePath, "stub");
+            var pdfPath = Path.Combine(dir, "doc.pdf"); File.WriteAllText(pdfPath, "%PDF-x");
+            var defaultCmd = ExternalPdfEngine.CreateSumatraCommand(enginePath, string.Empty, pdfPath);
+            Check(defaultCmd.ArgumentList.Contains("-print-to-default") && !defaultCmd.ArgumentList.Contains("-print-to"), "empty printer name must follow the Windows default printer");
+            var namedCmd = ExternalPdfEngine.CreateSumatraCommand(enginePath, "EPSON L300", pdfPath);
+            Check(namedCmd.ArgumentList.Contains("-print-to") && namedCmd.ArgumentList.Contains("EPSON L300") && !namedCmd.ArgumentList.Contains("-print-to-default"), "configured printer name must be pinned to the print command");
+            Expect("INVALID_PRINTER_CONFIGURATION", () => ExternalPdfEngine.CreateSumatraCommand(enginePath, "bad\nname", pdfPath));
+            Expect("INVALID_ENGINE_CONFIGURATION", () => ExternalPdfEngine.CreateSumatraCommand("relative-engine.exe", "printer", pdfPath));
         }
         finally { Directory.Delete(dir, true); }
     }

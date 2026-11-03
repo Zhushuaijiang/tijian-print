@@ -30,6 +30,10 @@ public partial class MainWindow
         try
         {
             WindowStyle = WindowStyle.SingleBorderWindow; WindowState = WindowState.Normal; Width = 1366; Height = 900;
+            bool gateOpened = false;
+            for (var i = 0; i < 5; i++) gateOpened = RegisterGateClick();
+            Require(gateOpened, "five consecutive clock taps open the service configuration gate");
+            Require(!RegisterGateClick(), "gate resets after being opened to prevent accidental reopening");
             var readiness = await printer.CheckAsync(CancellationToken.None);
             passed.Add("configured printer preflight completed: " + readiness.Ready + " / " + readiness.Message);
             await Capture("01-home");

@@ -120,22 +120,55 @@ public sealed class KioskReportClient(KioskSettings settings) : IDisposable
 
 public sealed class WindowsPrinterAdapter(KioskSettings settings) : IKioskPrintAdapter
 {
+    // 解析生效打印机：配置名有效则用配置名；配置名无效或为空则回退系统默认打印机。
+    // 返回 (生效打印机名, 预检附加说明)；名称为 null 表示系统中完全没有可用打印机。
+    private (string? Name, string Note) ResolvePrinter()
+    {
+        if (!string.IsNullOrWhiteSpace(settings.PrinterName))
+        {
+            try
+            {
+                using var server = new LocalPrintServer();
+                using var queue = server.GetPrintQueue(settings.PrinterName);
+                queue.Refresh();
+                return (settings.PrinterName, string.Empty);
+            }
+            catch (PrintSystemException) { }
+        }
+        try
+        {
+            using var server = new LocalPrintServer();
+            using var fallback = server.DefaultPrintQueue;
+            fallback.Refresh();
+            var note = string.IsNullOrWhiteSpace(settings.PrinterName)
+                ? string.Empty
+                : "（配置的打印机「" + settings.PrinterName + "」未找到，已回退到系统默认打印机）";
+            return (fallback.Name, note);
+        }
+        catch (PrintSystemException)
+        {
+            return (null, string.IsNullOrWhiteSpace(settings.PrinterName) ? "设备尚未配置打印机。" : "无法连接指定打印机，请联系工作人员。");
+        }
+    }
+
     public Task<PrinterReadiness> CheckAsync(CancellationToken ct) => Task.Run(() =>
     {
         ct.ThrowIfCancellationRequested();
         if (!settings.PhysicalPrintingEnabled) return new PrinterReadiness(false, "设备尚未启用纸质报告领取，请联系服务台。");
         if (string.IsNullOrWhiteSpace(settings.PdfEnginePath) || !File.Exists(settings.PdfEnginePath) || !Path.IsPathFullyQualified(settings.PdfEnginePath))
             return new PrinterReadiness(false, "打印组件需要工作人员配置。");
-        if (string.IsNullOrWhiteSpace(settings.PrinterName)) return new PrinterReadiness(false, "设备尚未配置打印机。");
+        var (name, note) = ResolvePrinter();
+        if (name is null) return new PrinterReadiness(false, note);
         try
         {
-            using var server = new LocalPrintServer(); using var queue = server.GetPrintQueue(settings.PrinterName); queue.Refresh();
+            using var server = new LocalPrintServer();
+            using var queue = server.GetPrintQueue(name); queue.Refresh();
             var status = queue.QueueStatus;
             if ((status & PrintQueueStatus.PaperOut) != 0) return new PrinterReadiness(false, "打印机缺纸，请联系工作人员加纸。");
             if ((status & PrintQueueStatus.PaperJam) != 0) return new PrinterReadiness(false, "打印机发生卡纸，请联系工作人员处理。");
             if ((status & (PrintQueueStatus.Offline | PrintQueueStatus.Paused | PrintQueueStatus.Error | PrintQueueStatus.NotAvailable | PrintQueueStatus.UserIntervention | PrintQueueStatus.DoorOpen)) != 0)
                 return new PrinterReadiness(false, "打印机暂时不可用，请联系工作人员。");
-            return new PrinterReadiness(true, "打印机就绪");
+            return new PrinterReadiness(true, "打印机就绪：" + name + note);
         }
         catch (PrintSystemException) { return new PrinterReadiness(false, "无法连接指定打印机，请联系工作人员。"); }
     }, ct);
@@ -143,7 +176,8 @@ public sealed class WindowsPrinterAdapter(KioskSettings settings) : IKioskPrintA
     public async Task SubmitAsync(string path, CancellationToken ct)
     {
         var readiness = await CheckAsync(ct); if (!readiness.Ready) throw new RuleException("PRINTER_NOT_READY");
-        var info = ExternalPdfEngine.CreateSumatraCommand(settings.PdfEnginePath, settings.PrinterName, path);
+        var (name, _) = ResolvePrinter();
+        var info = ExternalPdfEngine.CreateSumatraCommand(settings.PdfEnginePath, name ?? string.Empty, path);
         using var process = Process.Start(info) ?? throw new RuleException("PRINT_ENGINE_START_FAILED");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(60));
         try { await process.WaitForExitAsync(timeout.Token); }

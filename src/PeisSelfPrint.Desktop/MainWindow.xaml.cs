@@ -250,6 +250,38 @@ public partial class MainWindow : Window
         }
     }
     private void UserActivity(object sender, InputEventArgs e) { lastActivity = DateTime.UtcNow; }
+    // 运维暗门：右上角时间栏连续点击 5 次（间隔不超过 2 秒）打开配置窗口。
+    private int gateClicks;
+    private DateTime gateLast = DateTime.MinValue;
+    private bool RegisterGateClick()
+    {
+        var now = DateTime.UtcNow;
+        gateClicks = now - gateLast <= TimeSpan.FromSeconds(2) ? gateClicks + 1 : 1;
+        gateLast = now;
+        if (gateClicks < 5) return false;
+        gateClicks = 0;
+        return true;
+    }
+    private void ClockGate_Click(object sender, RoutedEventArgs e) { if (RegisterGateClick()) OpenConfig(); }
+    private async void OpenConfig()
+    {
+        lastActivity = DateTime.UtcNow;
+        var version = session.Current;
+        var config = new KioskConfigWindow(settings, printer) { Owner = this };
+        config.ShowDialog();
+        if (closed) return;
+        if (step == KioskStep.Confirm && lookup is not null && !lookup.IsDemo)
+        {
+            printerReady = false; PrintButton.IsEnabled = false; PrinterStatus.Text = "正在检查打印设备…";
+            try
+            {
+                var readiness = await printer.CheckAsync(CancellationToken.None);
+                if (!closed && step == KioskStep.Confirm && session.IsCurrent(version)) { printerReady = readiness.Ready; PrinterStatus.Text = readiness.Message; }
+            }
+            catch (OperationCanceledException) { }
+            UpdatePrintButton();
+        }
+    }
     private async void Window_KeyDown(object sender, KeyEventArgs e)
     {
         lastActivity = DateTime.UtcNow;
