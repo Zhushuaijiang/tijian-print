@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -34,6 +35,18 @@ public partial class MainWindow
             for (var i = 0; i < 5; i++) gateOpened = RegisterGateClick();
             Require(gateOpened, "five consecutive clock taps open the service configuration gate");
             Require(!RegisterGateClick(), "gate resets after being opened to prevent accidental reopening");
+
+            // 服务配置（数据库/报告服务）纯逻辑断言
+            Require(KioskConfigWindow.ValidateServiceInputs("", "", Array.Empty<string>()).Count == 0, "empty service inputs are valid (means no override)");
+            Require(KioskConfigWindow.ValidateServiceInputs("Host=db;Port=5432", "http://10.0.0.1:8080/", new[] { "http://10.0.0.1:8230" }).Count == 0, "well-formed service inputs pass validation");
+            Require(KioskConfigWindow.ValidateServiceInputs("no-host-here", "notaurl", new[] { "ftp://bad" }).Count == 3, "malformed service inputs are all rejected");
+            var integration = new JsonObject();
+            KioskConfigWindow.ApplyServiceOverrides(integration, "Host=db;Port=5432", "http://10.0.0.1:8080/", new[] { " http://10.0.0.1:8230 ", "" }, "A1", "");
+            Require((string?)integration["ConnectionString"] == "Host=db;Port=5432" && (string?)integration["PeisCenterId"] is null, "service overrides set values and drop blanks");
+            Require(((JsonArray?)integration["AllowedPdfOrigins"])!.Count == 1, "origin list trims and skips blank lines");
+            KioskConfigWindow.ApplyServiceOverrides(integration, "", "", Array.Empty<string>(), "", "");
+            Require(!integration.ContainsKey("ConnectionString") && !integration.ContainsKey("AllowedPdfOrigins"), "blank overrides fall back to bundled defaults");
+            passed.Add("service config override merge verified");
             var readiness = await printer.CheckAsync(CancellationToken.None);
             passed.Add("configured printer preflight completed: " + readiness.Ready + " / " + readiness.Message);
             await Capture("01-home");

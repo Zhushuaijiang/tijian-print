@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Printing;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -21,6 +22,7 @@ public partial class KioskConfigWindow : Window
     private readonly WindowsPrinterAdapter printer;
     private static readonly string settingsPath = Path.Combine(AppContext.BaseDirectory, "kiosk.settings.json");
     private static readonly string apiDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Api"));
+    private static readonly string localIntegrationPath = Path.Combine(apiDir, "integration.local.json");
     private static readonly string enginePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Tools", "SumatraPDF.exe"));
 
     public KioskConfigWindow(KioskSettings current, WindowsPrinterAdapter adapter)
@@ -30,6 +32,7 @@ public partial class KioskConfigWindow : Window
         printer = adapter;
         SettingsPathText.Text = settingsPath;
         LoadUiFromSettings();
+        LoadServiceUi();
     }
 
     // ---------- 初始化 ----------
@@ -172,8 +175,23 @@ public partial class KioskConfigWindow : Window
     {
         ApplyUiToSettings();
         SaveSettings();
-        var answer = MessageBox.Show(this, "设置已保存。重启程序后生效，是否立即重启？", "保存并重启", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        // 服务配置一并保存（输入非法则中止重启，先提示修正）
+        var conn = DbConnBox.Text.Trim();
+        var reportUrl = ReportUrlBox.Text.Trim();
+        var origins = OriginLines();
+        var errors = ValidateServiceInputs(conn, reportUrl, origins);
+        if (errors.Count > 0) { ServiceHint.Text = "服务配置未保存：" + string.Join("；", errors); return; }
+        if (!TryWriteServiceConfig(conn, reportUrl, origins, AreaIdBox.Text.Trim(), CenterIdBox.Text.Trim())) return;
+        var answer = MessageBox.Show(this, "设置已保存。重启程序与后台服务后生效，是否立即重启？", "保存并重启", MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (answer != MessageBoxResult.OK) return;
+        // 优先走部署包的一键重启脚本：同时重启 Desktop 与 Api 后台服务，保证服务配置生效
+        var script = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Start-Debug.ps1"));
+        if (File.Exists(script))
+        {
+            Process.Start(new ProcessStartInfo("powershell.exe", "-NoLogo -NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Restart") { UseShellExecute = false, CreateNoWindow = true });
+            Application.Current.Shutdown();
+            return;
+        }
         var exe = Environment.ProcessPath;
         if (!string.IsNullOrEmpty(exe)) Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = AppContext.BaseDirectory });
         Application.Current.Shutdown();
@@ -201,6 +219,136 @@ public partial class KioskConfigWindow : Window
     {
         var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(settingsPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+    }
+
+    // ---------- 数据服务配置（数据库 / 报告服务，覆盖层写入 Api/integration.local.json） ----------
+
+    private void LoadServiceUi()
+    {
+        DbConnBox.Text = ReadApiConfigString("ConnectionString") ?? string.Empty;
+        ReportUrlBox.Text = ReadApiConfigString("ReportApiBaseUrl") ?? string.Empty;
+        OriginsBox.Text = string.Join(Environment.NewLine, ReadApiConfigOrigins());
+        AreaIdBox.Text = ReadApiConfigString("HospitalAreaId") ?? string.Empty;
+        CenterIdBox.Text = ReadApiConfigString("PeisCenterId") ?? string.Empty;
+    }
+
+    // 输入校验：返回错误列表（空 = 通过）。可独立于 UI 测试。
+    internal static List<string> ValidateServiceInputs(string conn, string reportUrl, string[] origins)
+    {
+        var errors = new List<string>();
+        if (!string.IsNullOrWhiteSpace(conn) && !System.Text.RegularExpressions.Regex.IsMatch(conn, @"(^|;)\s*Host\s*=", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            errors.Add("连接串必须包含 Host=（格式：Host=…;Port=…;Database=…;Username=…;Password=…）");
+        if (!string.IsNullOrWhiteSpace(reportUrl) && (!Uri.TryCreate(reportUrl.Trim(), UriKind.Absolute, out var uri0) || uri0.Scheme is not ("http" or "https")))
+            errors.Add("报告服务地址必须是完整 URL（含 http:// 或 https://）");
+        foreach (var line in origins)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (!Uri.TryCreate(line.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+                errors.Add("PDF 允许来源每行必须是完整 http/https URL：" + line.Trim());
+        }
+        return errors;
+    }
+
+    // 把界面值合并进覆盖层 JSON：空值 = 删除覆盖（回退 appsettings.json 出厂值）；保留界面之外的既有字段。
+    internal static JsonObject ApplyServiceOverrides(JsonObject integration, string conn, string reportUrl, string[] origins, string areaId, string centerId)
+    {
+        SetOrRemove(integration, "ConnectionString", conn);
+        SetOrRemove(integration, "ReportApiBaseUrl", reportUrl);
+        if (origins.Length > 0)
+        {
+            var array = new JsonArray();
+            foreach (var line in origins)
+                if (!string.IsNullOrWhiteSpace(line)) array.Add(line.Trim());
+            if (array.Count > 0) integration["AllowedPdfOrigins"] = array; else integration.Remove("AllowedPdfOrigins");
+        }
+        else integration.Remove("AllowedPdfOrigins");
+        SetOrRemove(integration, "HospitalAreaId", areaId);
+        SetOrRemove(integration, "PeisCenterId", centerId);
+        return integration;
+    }
+
+    private static void SetOrRemove(JsonObject obj, string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) obj.Remove(key);
+        else obj[key] = value.Trim();
+    }
+
+    private string[] OriginLines() => OriginsBox.Text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+    private void SaveService_Click(object sender, RoutedEventArgs e)
+    {
+        var conn = DbConnBox.Text.Trim();
+        var reportUrl = ReportUrlBox.Text.Trim();
+        var origins = OriginLines();
+        var errors = ValidateServiceInputs(conn, reportUrl, origins);
+        if (errors.Count > 0) { ServiceHint.Text = "未保存：" + string.Join("；", errors); return; }
+        if (TryWriteServiceConfig(conn, reportUrl, origins, AreaIdBox.Text.Trim(), CenterIdBox.Text.Trim()))
+            ServiceHint.Text = "已保存到 Api/integration.local.json。数据库等后台服务配置需重启后台服务后生效（点「保存并重启程序」即可）。";
+    }
+
+    private bool TryWriteServiceConfig(string conn, string reportUrl, string[] origins, string areaId, string centerId)
+    {
+        JsonObject root;
+        try
+        {
+            root = File.Exists(localIntegrationPath) && JsonNode.Parse(File.ReadAllText(localIntegrationPath)) is JsonObject existing ? existing : new JsonObject();
+        }
+        catch (JsonException ex) { ServiceHint.Text = "integration.local.json 已损坏（" + ex.Message + "），请先点「清除本机覆盖」恢复默认。"; return false; }
+
+        if (root["Integration"] is not JsonObject integration) { integration = new JsonObject(); root["Integration"] = integration; }
+        ApplyServiceOverrides(integration, conn, reportUrl, origins, areaId, centerId);
+
+        try
+        {
+            Directory.CreateDirectory(apiDir);
+            File.WriteAllText(localIntegrationPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+            return true;
+        }
+        catch (Exception ex) { ServiceHint.Text = "写入失败：" + ex.Message; return false; }
+    }
+
+    private void ClearServiceOverride_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (File.Exists(localIntegrationPath))
+            {
+                var answer = MessageBox.Show(this, "将删除本机覆盖文件 integration.local.json，数据服务配置恢复为随包默认值。确定？", "清除本机覆盖", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+                if (answer != MessageBoxResult.OK) return;
+                File.Delete(localIntegrationPath);
+            }
+            LoadServiceUi();
+            ServiceHint.Text = "本机覆盖已清除，数据服务配置恢复为随包默认值（重启后台服务后生效）。";
+        }
+        catch (Exception ex) { ServiceHint.Text = "清除失败：" + ex.Message; }
+    }
+
+    private void TestService_Click(object sender, RoutedEventArgs e)
+    {
+        var conn = DbConnBox.Text.Trim();
+        var reportUrl = ReportUrlBox.Text.Trim();
+        var origins = OriginLines();
+        var errors = ValidateServiceInputs(conn, reportUrl, origins);
+        if (errors.Count > 0) { ServiceHint.Text = "输入有误，无法测试：" + string.Join("；", errors); return; }
+        var results = new List<string>();
+        if (!string.IsNullOrWhiteSpace(conn))
+        {
+            var (host, port) = ParseEndpoint(conn, "Host", 5432);
+            if (host is null) results.Add("数据库：连接串中未找到 Host=");
+            else results.Add("数据库 " + host + ":" + port + " → " + (ProbeTcp(host, port) ? "可达" : "无法连接"));
+        }
+        if (!string.IsNullOrWhiteSpace(reportUrl))
+        {
+            var (host, port) = ParseEndpoint(reportUrl, null, 80);
+            if (host is not null) results.Add("报告服务 " + host + ":" + port + " → " + (ProbeTcp(host, port) ? "可达" : "无法连接"));
+        }
+        foreach (var line in origins)
+        {
+            var (host, port) = ParseEndpoint(line.Trim(), null, 80);
+            if (host is not null) results.Add("PDF 源 " + host + ":" + port + " → " + (ProbeTcp(host, port) ? "可达" : "无法连接"));
+        }
+        if (results.Count == 0) results.Add("未填写任何数据服务地址。");
+        ServiceHint.Text = string.Join("；", results) + "。（仅探测端口连通性，账号密码是否正确以实际查询为准）";
     }
 
     // ---------- 环境检测 ----------
