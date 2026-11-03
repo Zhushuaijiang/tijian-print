@@ -309,12 +309,15 @@ public partial class KioskConfigWindow : Window
         var value = text;
         if (key is not null)
         {
-            var match = System.Text.RegularExpressions.Regex.Match(text, key + @"=([^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var match = System.Text.RegularExpressions.Regex.Match(text, key + @"=(""([^""]*)""|[^;]+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
             if (!match.Success) return (null, fallbackPort);
-            value = match.Groups[1].Value.Trim();
+            value = match.Groups[2].Success ? match.Groups[2].Value.Trim() : match.Groups[1].Value.Trim();
+            // 连接串场景：端口在独立的 Port= 键里，不能被 Uri 默认端口覆盖
+            var portMatch = System.Text.RegularExpressions.Regex.Match(text, @"Port=(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (portMatch.Success && int.TryParse(portMatch.Groups[1].Value, out var parsed)) fallbackPort = parsed;
         }
         if (!Uri.TryCreate(value.Contains("://") ? value : "http://" + value, UriKind.Absolute, out var uri)) return (null, fallbackPort);
-        return (uri.Host, uri.Port);
+        return (uri.Host, uri.IsDefaultPort ? fallbackPort : uri.Port);
     }
 
     private static bool ProbeTcp(string host, int port)
@@ -348,32 +351,40 @@ public partial class KioskConfigWindow : Window
         }
     }
 
-    private static JsonElement? LoadApiConfig()
+    // 合并读取 Api 配置：appsettings.json 为兜底，integration.local.json 同名字段优先覆盖。
+    // （现场部署习惯：连接串放 integration.local.json，报告服务地址等放 appsettings.json）
+    private static Dictionary<string, JsonElement>? LoadApiConfig()
     {
-        try
+        var merged = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        var any = false;
+        foreach (var name in new[] { "appsettings.json", "integration.local.json" })
         {
-            var file = Path.Combine(apiDir, "integration.local.json");
-            if (!File.Exists(file)) file = Path.Combine(apiDir, "appsettings.json");
-            if (!File.Exists(file)) return null;
-            return JsonDocument.Parse(File.ReadAllText(file)).RootElement;
+            var file = Path.Combine(apiDir, name);
+            if (!File.Exists(file)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                if (!doc.RootElement.TryGetProperty("Integration", out var integration) || integration.ValueKind != JsonValueKind.Object) continue;
+                foreach (var prop in integration.EnumerateObject()) merged[prop.Name] = prop.Value.Clone();
+                any = true;
+            }
+            catch (JsonException) { }
         }
-        catch (JsonException) { return null; }
+        return any ? merged : null;
     }
 
     private static string? ReadApiConfigString(string property)
     {
         var root = LoadApiConfig();
-        if (root is null || !root.Value.TryGetProperty("Integration", out var integration)) return null;
-        if (integration.ValueKind != JsonValueKind.Object || !integration.TryGetProperty(property, out var value)) return null;
-        var text = value.GetString();
+        if (root is null || !root.TryGetValue(property, out var value)) return null;
+        var text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     private static IEnumerable<string> ReadApiConfigOrigins()
     {
         var root = LoadApiConfig();
-        if (root is null || !root.Value.TryGetProperty("Integration", out var integration) || integration.ValueKind != JsonValueKind.Object) yield break;
-        if (!integration.TryGetProperty("AllowedPdfOrigins", out var array) || array.ValueKind != JsonValueKind.Array) yield break;
+        if (root is null || !root.TryGetValue("AllowedPdfOrigins", out var array) || array.ValueKind != JsonValueKind.Array) yield break;
         foreach (var item in array.EnumerateArray())
         {
             var text = item.GetString();
